@@ -17,6 +17,7 @@ limitations under the License.
 package rest
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -126,6 +127,13 @@ type requestHandler struct {
 	API
 }
 
+type myReader struct {
+	*bytes.Buffer
+}
+
+// So that it implements the io.ReadCloser interface
+func (m myReader) Close() error { return nil }
+
 // handleCreate returns a HandlerFunc which will deserialize the request payload, pass
 // it to the provided create function, and then serialize and dispatch the response.
 // The serialization mechanism used is specified by the "format" query parameter.
@@ -135,10 +143,18 @@ func (h requestHandler) handleCreate(handler ResourceHandler) http.Handler {
 		version := ctx.Version()
 		rules := handler.Rules()
 
-		data, err := decodePayload(payloadString(r.Body))
+		buf, _ := ioutil.ReadAll(r.Body)
+		rdr1 := myReader{bytes.NewBuffer(buf)}
+		rdr2 := myReader{bytes.NewBuffer(buf)}
+		data, err := decodePayload(payloadString(rdr1))
+		r.Body = rdr2
+
 		if err != nil {
-			// Payload decoding failed.
-			ctx = ctx.setError(BadRequest(err.Error()))
+			// ctx = ctx.setError(BadRequest(err.Error()))
+			resource, _ := handler.CreateResource(ctx, data, ctx.Version())
+			resource = applyOutboundRules(resource, rules, version)
+			ctx = ctx.setResult(resource)
+			ctx = ctx.setStatus(http.StatusCreated)
 		} else {
 			data, err := applyInboundRules(data, rules, version)
 			if err != nil {
